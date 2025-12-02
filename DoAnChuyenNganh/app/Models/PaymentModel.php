@@ -16,7 +16,7 @@ class PaymentModel
         $sql = "SELECT DISTINCT method FROM payments ORDER BY method ASC";
         $stmt = $this->con->prepare($sql);
         $stmt->execute();
-        return $stmt->fetchAll(PDO::FETCH_COLUMN); // chỉ lấy cột 'method'
+        return $stmt->fetchAll(PDO::FETCH_COLUMN); 
     }
 
 

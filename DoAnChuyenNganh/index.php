@@ -1,57 +1,114 @@
 <?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-header("Access-Control-Allow-Headers: Content-Type");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
+require __DIR__ . '/vendor/autoload.php';
+
+use App\Core\Database;
+use App\Models\UserModel;
+use App\Services\AuthService;
+use App\Controllers\AuthController;
+use App\Middlewares\AuthMiddleware;
+
 header("Access-Control-Allow-Origin: http://localhost:5173");
 header("Access-Control-Allow-Credentials: true");
-require_once "app/Controller/ProductController.php";
-require_once "app/Controller/CategoryController.php";
-require_once "app/Controller/CartController.php";
-require_once "app/Controller/OrderController.php";
-require_once "app/Controller/PaymentController.php";
-require_once "app/Controller/ShipController.php";
-require_once "app/Controller/AuthController.php";
-require_once "app/Controller/SubcategoryController.php";
-require_once "app/Controller/UserController.php";
-require_once "./core/Session.php";
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+header("Content-Type: application/json; charset=UTF-8"); // Luôn trả về JSON
 
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
 
-if (isset($_GET['url'])) {
-    $parts = explode('/', trim($_GET['url'], '/'));
-    $controllerName = $parts[0] ?? 'product';
-    $action = $parts[1] ?? 'index';
+try {
+    $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    $path = trim($requestUri, '/'); 
+
+   
+    $parts = !empty($path) ? explode('/', $path) : [];
+
+    $controllerName = $parts[0] ?? 'product'; 
+    $action = $parts[1] ?? 'index';           
     $id = $parts[2] ?? null;
-} else {
-    $controllerName = $_GET['controller'] ?? 'product';
-    $action = $_GET['action'] ?? 'index';
-    $id = $_GET['id'] ?? null;
-}
 
-$controllers = [
-    "product" => ProductController::class,
-    "category" => CategoryController::class,
-    "cart" => CartController::class,
-    "order" => OrderController::class,
-    "payment" => PaymentController::class,
-    "ship" => ShipProviderController::class,
-    "auth" => AuthController::class,
-    "subcategory" => SubcategoryController::class,
-    "user" => UserController::class
-];
+    $protectedControllers = ['cart', 'order', 'payment', 'user', 'profile'];
+    
+    if (in_array($controllerName, $protectedControllers)) {
+        $middleware = new AuthMiddleware();
+        $currentUser = $middleware->isAuth(); 
+    }
 
-if (!isset($controllers[$controllerName])) {
-    die(json_encode(["error" => "Controller not found"]));
-}
+    $db = new Database(); 
 
-$controller = new $controllers[$controllerName]();
+    $controller = null;
 
-// Check if method exists
-if (!method_exists($controller, $action)) {
-    die(json_encode(["error" => "Method '$action' not found in " . get_class($controller)]));
-}
+    switch ($controllerName) {
+        case 'auth':
+            $userModel = new UserModel(); 
+            $authService = new AuthService($userModel); 
+            $controller = new AuthController($authService); 
+            break;
+        case 'cart':
+            $cartModel = new \App\Models\CartModel();
+            $cartService = new \App\Services\CartService($cartModel);
+            $controller = new \App\Controllers\CartController($cartService);
+                
+            if (isset($currentUser)) {
+                    $controller->setUser($currentUser);
+            
+            }else {
+                     http_response_code(401);
+                     echo json_encode(["message" => "Unauthorized"]);
+                     exit;
+                }
+            break;
+            case 'order':
+                $cartModel = new \App\Models\CartModel();
+                $orderService = new \App\Services\OrderService($cartModel); 
+                $controller = new \App\Controllers\OrderController($orderService);
+                
+                if (isset($currentUser)) {
+                    $controller->setUser($currentUser);
+                } else {
+                     // Chặn nếu chưa login
+                     http_response_code(401);
+                     echo json_encode(["message" => "Unauthorized"]);
+                     exit;
+                }
+                break;
+    
+        
 
-if ($id !== null) {
-    $controller->$action($id);
-} else {
-    $controller->$action();
+        default:
+            $className = "App\\Controllers\\" . ucfirst($controllerName) . "Controller";
+            
+            if (class_exists($className)) {
+                $controller = new $className();
+            } else {
+                throw new Exception("Controller '$controllerName' not found");
+            }
+            break;
+    }
+
+    if (method_exists($controller, $action)) {
+        if ($id !== null) {
+            $controller->$action($id);
+        } else {
+            $controller->$action();
+        }
+    } else {
+        throw new Exception("Method '$action' not found in " . get_class($controller));
+    }
+
+} catch (Exception $e) {
+    $statusCode = 500;
+    if ($e->getMessage() == "Controller '$controllerName' not found") $statusCode = 404;
+    
+    http_response_code($statusCode);
+    echo json_encode([
+        "status" => "error",
+        "message" => $e->getMessage()
+    ]);
 }
